@@ -1,7 +1,5 @@
 import { users } from "../repository";
 
-console.log('Hello world mamaco');
-
 interface MyFunctionParams {
     personId: string;
 }
