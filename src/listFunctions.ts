@@ -7,7 +7,13 @@ interface TypeObject {
   fileUrl: string
 }
 
-export function extractExportsFromFile(fileName: string) {
+var wholeProjectTypes: TypeObject[] = [];
+
+export async function extractExportsFromFile(fileName: string, modulesExtension = 'ts') {
+  console.log(`extractExportsFromFile(concatPath)`, fileName)
+  
+ const sourceFileNodes: ts.Node[] = []
+ async function exec(){
   const sourceFile = ts.createSourceFile(
     fileName,
     ts.sys.readFile(fileName)!,
@@ -15,15 +21,11 @@ export function extractExportsFromFile(fileName: string) {
     true
   );
 
-  const sourceFileNodes: ts.Node[] = []
-  const wholeProjectTypes: TypeObject[] = [];
-
- async function exec(){
     ts.forEachChild(sourceFile, (node) => {
       sourceFileNodes.push(node);
     });
+
     await Promise.all(sourceFileNodes.map(nodeIterationCallback))
-    console.log(wholeProjectTypes);
   }
 
   async function nodeIterationCallback(node: ts.Node) {
@@ -31,31 +33,52 @@ export function extractExportsFromFile(fileName: string) {
 
     if(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)){
       const importFilePath = node.getText().split('from')[1].replaceAll('"', '').replace(';', '');
-      const concatPath = `${fileName.split('/').slice(0, fileName.split('/').length - 1).join('/').trim()}/${importFilePath.trim()}`
+      const concatPath = `${fileName.split('/').slice(0, fileName.split('/').length - 1).join('/').trim()}/${importFilePath.trim()}.${modulesExtension}`
+      extractExportsFromFile(concatPath)
       wholeProjectTypes.push(...(await getAllInterfacesOnFile(concatPath)))
     }
   }
-  exec();
+  await exec();
+
+  return parseAntInjectExtendedTypes(wholeProjectTypes);
 }
 
 
 //UTILS
-async function getAllInterfacesOnFile (filePath: string, fileExtension = 'ts'): Promise<TypeObject[]> {
-  const parsedFilePathWithFileExtension = `${filePath}.${fileExtension}`.replaceAll('/./', '/');
+async function getAllInterfacesOnFile (filePath: string): Promise<TypeObject[]> {
+  const parsedFilePathWithFileExtension = `${filePath}`.replaceAll('/./', '/');
   const wholeFile = await fs.readFile(parsedFilePathWithFileExtension, {encoding: 'utf8'})
-  return Array.from(
+  const typesWithoutExtends = Array.from(
     wholeFile.matchAll(/(export\s)*interface\s*[A-Z+]\w*\s*{.*\s[\s\w\d:;]*}/g))
-    .map(elem => {
-      const splittedAndParsedInterface = elem[0].replace(/(export[\s]*)*(interface )/g, '').split('{', )
-      splittedAndParsedInterface[1] = splittedAndParsedInterface[1].replaceAll(/[\n\r\s]*/g, '').replaceAll(';', ',').trim();
-      splittedAndParsedInterface[1] = splittedAndParsedInterface[1].split(',').map(
-        interfaceBody => interfaceBody.split(':').map(entryString => `"${entryString}"`).join(':')
-        ).join(',').replace(',"}"', ' }');
+    .map(elem => parseMatchedRegexIntoObject(parsedFilePathWithFileExtension, elem));
+  const typesWithExtends = Array.from(
+    wholeFile.matchAll(/(export\s)*interface\s*[A-Za-z+]\w*\s*extends\s*[A-Za-z+]\w*\s*{.*\s[\s\w\d:;]*}/g))
+    .map(elem => parseMatchedRegexIntoObject(parsedFilePathWithFileExtension, elem));
+  return [...typesWithExtends, ...typesWithoutExtends]
+}
+
+function parseMatchedRegexIntoObject (filePath: string, regexMatch: RegExpMatchArray) {
+  const splittedAndParsedInterface = regexMatch[0].replace(/(export[\s]*)*(interface )/g, '').split('{', )
+ 
+    splittedAndParsedInterface[1] = splittedAndParsedInterface[1].replaceAll(/[\n\r\s]*/g, '').replaceAll(';', ',').trim();
+    splittedAndParsedInterface[1] = splittedAndParsedInterface[1].split(',').map(
+      (interfaceBody: string) => interfaceBody.split(':').map((entryString: string) => `"${entryString}"`).join(':')
+      ).join(',').replace(',"}"', ' }');
       return {
         name: splittedAndParsedInterface[0].trim() as string,
         body: JSON.parse(`{ ${splittedAndParsedInterface[1]}`) as {},
-        fileUrl: parsedFilePathWithFileExtension
+        fileUrl: filePath
       }
-    });
-  
+}
+
+function parseAntInjectExtendedTypes(typesList: TypeObject[]){
+  const typesWithExtends = typesList.filter(type => type.name.match(/\s*extends\s*[A-Za-z+]\w*\s*/g))
+  typesWithExtends.forEach(type => {
+    const [typeName, extendedTypeName] = type.name.split('extends')
+    const extendedType = typesList.find(type => type.name === extendedTypeName.trim())
+    type.name = typeName.trim()
+    type.body = {...type.body, ...extendedType?.body}
+  })
+  // fullTypeWithExtendName = fullTypeWithExtendName.replace(/\s*extends\s*[A-Za-z+]\w*\s*/g, '').trim();
+  return typesList;
 }
