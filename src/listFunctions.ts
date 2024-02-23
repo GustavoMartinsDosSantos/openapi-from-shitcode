@@ -34,6 +34,8 @@ export async function extractExportsFromFile(
   async function nodeIterationCallback(node: ts.Node) {
     if (!node.getText()) return;
 
+    const arrowFunctionNode = getArrowFunctionFromVariableStatement(node);
+
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
       const importFilePath = node
         .getText()
@@ -49,8 +51,8 @@ export async function extractExportsFromFile(
       wholeProjectTypes.push(...(await getAllInterfacesOnFile(concatPath)));
     } else if (ts.isFunctionLike(node)) {
       console.log("Function handler implementation!!");
-    } else if (!!getArrowFunctionFromVariableStatement(node)) {
-      console.log("Arrow function handler implementation!!");
+    } else if (arrowFunctionNode) {
+      console.log("ARROW", arrowFunctionNode.getText())
     }
   }
   await exec();
@@ -58,7 +60,7 @@ export async function extractExportsFromFile(
   return parseAntInjectExtendedTypes(wholeProjectTypes);
 }
 
-function getArrowFunctionFromVariableStatement(node: ts.Node): any {
+function getArrowFunctionFromVariableStatement(node: ts.Node): ts.Node | undefined {
   if (ts.isArrowFunction(node)) {
     return node;
   } else {
